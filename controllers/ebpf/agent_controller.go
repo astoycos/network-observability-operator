@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/netobserv/network-observability-operator/controllers/ebpf/internal/permissions"
 	"github.com/netobserv/network-observability-operator/controllers/operator"
@@ -22,6 +23,8 @@ import (
 	"github.com/netobserv/network-observability-operator/controllers/reconcilers"
 	"github.com/netobserv/network-observability-operator/pkg/helper"
 	"k8s.io/apimachinery/pkg/api/equality"
+
+	bpfdHelpers "github.com/redhat-et/bpfd/bpfd-operator/pkg/helpers"
 )
 
 const (
@@ -122,6 +125,18 @@ func (c *AgentController) Reconcile(
 			}
 			return fmt.Errorf("deleting eBPF agent: %w", err)
 		}
+
+		// Delete any bpfProgConfigs with the label app=netobserv
+		labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "netobserv"}}
+		if bpfdHelpers.IsBpfdDeployed() {
+			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, &labelSelector); err != nil {
+				return err
+			}
+		} else {
+			rlog.Info("bpfd isn't enabled, not deploying bpfProgramConfigs")
+		}
+
 		// Current now has been deleted. Set it to nil to that it triggers actionCreate if we are changing namespace
 		current = nil
 	}
@@ -138,9 +153,27 @@ func (c *AgentController) Reconcile(
 
 	switch c.requiredAction(current, desired) {
 	case actionCreate:
+		// Create bpfdProgramConfig if bpfd is enabled
+		// TODO(astoycos) not enabled for exclude interfaces
+		if bpfdHelpers.IsBpfdDeployed() {
+			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil); err != nil {
+				return err
+			}
+		} else {
+			rlog.Info("bpfd isn't enabled, not deploying bpfProgramConfigs")
+		}
 		rlog.Info("action: create agent")
 		return c.client.CreateOwned(ctx, desired)
 	case actionUpdate:
+		if bpfdHelpers.IsBpfdDeployed() {
+			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil); err != nil {
+				return err
+			}
+		} else {
+			rlog.Info("bpfd isn't enabled, not deploying bpfProgramConfigs")
+		}
 		rlog.Info("action: update agent")
 		return c.client.UpdateOwned(ctx, current, desired)
 	default:
@@ -163,6 +196,70 @@ func (c *AgentController) current(ctx context.Context) (*v1.DaemonSet, error) {
 			c.previousPrivilegedNamespace, constants.EBPFAgentName, err)
 	}
 	return &agentDS, nil
+}
+
+func (c *AgentController) desiredBpfdState(interfaces []string, deleteLabels *metav1.LabelSelector) error {
+	bpfdClient := bpfdHelpers.GetClientOrDie()
+
+	if deleteLabels != nil {
+		return bpfdHelpers.DeleteBpfProgConfLabels(bpfdClient, deleteLabels)
+	}
+
+	for _, intf := range interfaces {
+		progConfEgr := bpfdHelpers.NewBpfProgramConfig(fmt.Sprintf("netobserv-flow-monitor-egress-%s", intf), bpfdHelpers.Tc)
+
+		// Add app label to make deletion easier
+		progConfEgr.Labels = map[string]string{"app": "netobserv"}
+		// Must match section name
+		progConfEgr.Spec.Name = "egress_flow_parse"
+		// Empty label selector selects all nodes
+		progConfEgr.Spec.NodeSelector = metav1.LabelSelector{}
+		// Attatch to the specified interface
+		progConfEgr.Spec.AttachPoint.NetworkMultiAttach.Interface = intf
+		// Set bytecode container image
+		progConfEgr.Spec.ByteCode = "image://quay.io/bpfd-bytecode/netobserv_egress:latest"
+		// Load on int Egress
+		progConfEgr.Spec.AttachPoint.NetworkMultiAttach.Direction = "EGRESS"
+		// Set Priority
+		progConfEgr.Spec.AttachPoint.NetworkMultiAttach.Priority = 50
+
+		err := bpfdHelpers.CreateOrUpdateBpfProgConf(bpfdClient, progConfEgr)
+		if err != nil {
+			return fmt.Errorf("failed to create bpfProgramConfig: %w", err)
+		}
+
+		if err := bpfdHelpers.WaitForBpfProgConfLoad(bpfdClient, progConfEgr.Name, 10*time.Second); err != nil {
+			return fmt.Errorf("failed to wait bpfProgramConfig readiness: %w", err)
+		}
+
+		progConfIng := bpfdHelpers.NewBpfProgramConfig(fmt.Sprintf("netobserv-flow-monitor-ingress-%s", intf), bpfdHelpers.Tc)
+
+		// add app label to make deletion easier
+		progConfIng.Labels = map[string]string{"app": "netobserv"}
+		// Must match section name
+		progConfIng.Spec.Name = "ingress_flow_parse"
+		// Empty label selector selects all nodes
+		progConfIng.Spec.NodeSelector = metav1.LabelSelector{}
+		// Attatch to the specified interface
+		progConfIng.Spec.AttachPoint.NetworkMultiAttach.Interface = intf
+		// Set bytecode container image
+		progConfIng.Spec.ByteCode = "image://quay.io/bpfd-bytecode/netobserv_ingress:latest"
+		// Load on int Ingress
+		progConfIng.Spec.AttachPoint.NetworkMultiAttach.Direction = "INGRESS"
+		// Set Priority
+		progConfIng.Spec.AttachPoint.NetworkMultiAttach.Priority = 50
+
+		err = bpfdHelpers.CreateOrUpdateBpfProgConf(bpfdClient, progConfIng)
+		if err != nil {
+			return fmt.Errorf("failed to create bpfProgramConfig: %w", err)
+		}
+
+		if err := bpfdHelpers.WaitForBpfProgConfLoad(bpfdClient, progConfIng.Name, 10*time.Second); err != nil {
+			return fmt.Errorf("failed to wait bpfProgramConfig readiness: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (c *AgentController) desired(coll *flowslatest.FlowCollector) *v1.DaemonSet {
