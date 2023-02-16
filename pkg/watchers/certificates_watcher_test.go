@@ -80,7 +80,7 @@ func TestWatchingCertificates(t *testing.T) {
 			Annotations: map[string]string{},
 		},
 	}
-	err := watcher.AnnotatePod(context.Background(), &clientMock, &pod, "loki-certificate", "kafka-certificate")
+	err := watcher.AnnotatePod(context.Background(), clientMock.Client, &pod, "loki-certificate", "kafka-certificate")
 	assert.NoError(err)
 
 	// Pod annotated with info from the loki-ca configmap
@@ -99,7 +99,7 @@ func TestWatchingCertificates(t *testing.T) {
 		CertKey:  "user.key",
 	})
 
-	err = watcher.AnnotatePod(context.Background(), &clientMock, &pod, "loki-certificate", "kafka-certificate")
+	err = watcher.AnnotatePod(context.Background(), clientMock.Client, &pod, "loki-certificate", "kafka-certificate")
 	assert.NoError(err)
 
 	// Pod annotated with info from the kafka-ca configmap and kafka-user secret
@@ -110,7 +110,7 @@ func TestWatchingCertificates(t *testing.T) {
 	}, pod.Annotations)
 
 	kafkaUser.SetResourceVersion("xxx")
-	err = watcher.AnnotatePod(context.Background(), &clientMock, &pod, "loki-certificate", "kafka-certificate")
+	err = watcher.AnnotatePod(context.Background(), clientMock.Client, &pod, "loki-certificate", "kafka-certificate")
 	assert.NoError(err)
 
 	// kafka-user secret updated with the new annotation
