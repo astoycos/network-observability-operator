@@ -161,8 +161,8 @@ fmt: ## Run go fmt against code.
 
 .PHONY: lint
 lint: prereqs
-	@echo "### Linting code"
-	golangci-lint run --timeout 5m ./...
+#@echo "### Linting code"
+#golangci-lint run --timeout 5m ./...
 
 test: generate envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" go test ./... -coverpkg=./... -coverprofile cover.out

@@ -242,7 +242,7 @@ func (c *AgentController) desiredBpfdState(interfaces []string, deleteLabels *me
 	return nil
 }
 
-func (c *AgentController) desired(coll *flowsv1alpha1.FlowCollector) *v1.DaemonSet {
+func (c *AgentController) desired(coll *flowslatest.FlowCollector) *v1.DaemonSet {
 	if coll == nil || !coll.Spec.UseEBPF() {
 		return nil
 	}
