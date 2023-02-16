@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/netobserv/network-observability-operator/controllers/ebpf/internal/permissions"
 	"github.com/netobserv/network-observability-operator/controllers/operator"
@@ -22,6 +23,8 @@ import (
 	"github.com/netobserv/network-observability-operator/controllers/reconcilers"
 	"github.com/netobserv/network-observability-operator/pkg/helper"
 	"k8s.io/apimachinery/pkg/api/equality"
+
+	bpfdHelpers "github.com/redhat-et/bpfd/bpfd-operator/pkg/helpers"
 )
 
 const (
@@ -122,6 +125,16 @@ func (c *AgentController) Reconcile(
 			}
 			return fmt.Errorf("deleting eBPF agent: %w", err)
 		}
+
+		// Delete any bpfProgConfigs with the label app=netobserv
+		labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "netobserv"}}
+		if bpfdHelpers.IsBpfdDeployed() {
+			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, &labelSelector); err != nil {
+				return err
+			}
+		}
+
 		// Current now has been deleted. Set it to nil to that it triggers actionCreate if we are changing namespace
 		current = nil
 	}
@@ -138,9 +151,23 @@ func (c *AgentController) Reconcile(
 
 	switch c.requiredAction(current, desired) {
 	case actionCreate:
+		// Create bpfdProgramConfig if bpfd is enabled
+		// TODO(astoycos) not enabled for exclude interfaces
+		if bpfdHelpers.IsBpfdDeployed() {
+			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil); err != nil {
+				return err
+			}
+		}
 		rlog.Info("action: create agent")
 		return c.client.CreateOwned(ctx, desired)
 	case actionUpdate:
+		if bpfdHelpers.IsBpfdDeployed() {
+			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil); err != nil {
+				return err
+			}
+		}
 		rlog.Info("action: update agent")
 		return c.client.UpdateOwned(ctx, current, desired)
 	default:
@@ -165,7 +192,57 @@ func (c *AgentController) current(ctx context.Context) (*v1.DaemonSet, error) {
 	return &agentDS, nil
 }
 
-func (c *AgentController) desired(coll *flowslatest.FlowCollector) *v1.DaemonSet {
+func (c *AgentController) desiredBpfdState(interfaces []string, deleteLabels *metav1.LabelSelector) error {
+	bpfdClient := bpfdHelpers.GetClientOrDie()
+
+	if deleteLabels != nil {
+		return bpfdHelpers.DeleteBpfProgConfLabels(bpfdClient, deleteLabels)
+	}
+
+	for _, intf := range interfaces {
+		progConf := bpfdHelpers.NewBpfProgramConfig(fmt.Sprintf("netobserv-flow-monitor-egress-%s", intf), bpfdHelpers.Tc)
+
+		// Must match section name
+		progConf.Labels = map[string]string{"app": "netobserv"}
+		progConf.Spec.Name = "flow_parse"
+		// Empty label selector selects all nodes
+		progConf.Spec.NodeSelector = metav1.LabelSelector{}
+		progConf.Spec.AttachPoint.NetworkMultiAttach.Interface = intf
+
+		// Load on int Egress
+		progConf.Spec.AttachPoint.NetworkMultiAttach.Direction = "EGRESS"
+
+		err := bpfdHelpers.CreateOrUpdateBpfProgConf(bpfdClient, progConf)
+		if err != nil {
+			return fmt.Errorf("Failed to create bpfProgramConfig: %w", err)
+		}
+
+		bpfdHelpers.WaitForBpfProgConfLoad(bpfdClient, progConf.Name, 10*time.Second)
+
+		progConf = bpfdHelpers.NewBpfProgramConfig(fmt.Sprintf("netobserv-flow-monitor-ingress-%s", intf), bpfdHelpers.Tc)
+
+		// Must match section name
+		progConf.Spec.Name = "flow_parse"
+		// Empty label selector selects all nodes
+		progConf.Spec.NodeSelector = metav1.LabelSelector{}
+		progConf.Spec.AttachPoint.NetworkMultiAttach.Interface = intf
+
+		// Load on int Ingress
+		progConf.Spec.AttachPoint.NetworkMultiAttach.Direction = "INGRESS"
+
+		err = bpfdHelpers.CreateOrUpdateBpfProgConf(bpfdClient, progConf)
+		if err != nil {
+			return fmt.Errorf("Failed to create bpfProgramConfig: %w", err)
+		}
+
+		bpfdHelpers.WaitForBpfProgConfLoad(bpfdClient, progConf.Name, 10*time.Second)
+
+	}
+
+	return nil
+}
+
+func (c *AgentController) desired(coll *flowsv1alpha1.FlowCollector) *v1.DaemonSet {
 	if coll == nil || !coll.Spec.UseEBPF() {
 		return nil
 	}
