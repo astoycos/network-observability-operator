@@ -131,24 +131,24 @@ func (r *FlowCollectorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// OVS config map for CNO
-	if r.availableAPIs.HasCNO() {
-		ovsConfigController := ovs.NewFlowsConfigCNOController(clientHelper,
-			ns,
-			desired.Spec.Agent.IPFIX.ClusterNetworkOperator.Namespace,
-			ovsFlowsConfigMapName,
-			r.lookupIP)
-		if err := ovsConfigController.Reconcile(ctx, desired); err != nil {
-			return ctrl.Result{}, r.failure(ctx, conditions.ReconcileCNOFailed(err), desired)
-		}
-	} else {
-		ovsConfigController := ovs.NewFlowsConfigOVNKController(clientHelper,
-			ns,
-			desired.Spec.Agent.IPFIX.OVNKubernetes,
-			r.lookupIP)
-		if err := ovsConfigController.Reconcile(ctx, desired); err != nil {
-			return ctrl.Result{}, r.failure(ctx, conditions.ReconcileOVNKFailed(err), desired)
-		}
-	}
+	// if r.availableAPIs.HasCNO() {
+	// 	ovsConfigController := ovs.NewFlowsConfigCNOController(clientHelper,
+	// 		ns,
+	// 		desired.Spec.Agent.IPFIX.ClusterNetworkOperator.Namespace,
+	// 		ovsFlowsConfigMapName,
+	// 		r.lookupIP)
+	// 	if err := ovsConfigController.Reconcile(ctx, desired); err != nil {
+	// 		return ctrl.Result{}, r.failure(ctx, conditions.ReconcileCNOFailed(err), desired)
+	// 	}
+	// } else {
+	// 	ovsConfigController := ovs.NewFlowsConfigOVNKController(clientHelper,
+	// 		ns,
+	// 		desired.Spec.Agent.IPFIX.OVNKubernetes,
+	// 		r.lookupIP)
+	// 	if err := ovsConfigController.Reconcile(ctx, desired); err != nil {
+	// 		return ctrl.Result{}, r.failure(ctx, conditions.ReconcileOVNKFailed(err), desired)
+	// 	}
+	// }
 
 	// eBPF agent
 	ebpfAgentController := ebpf.NewAgentController(clientHelper, ns, previousNamespace, &r.permissions, r.config)
