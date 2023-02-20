@@ -12,8 +12,7 @@ spec:
       sampling: 50
       cacheActiveTimeout: 5s
       cacheMaxFlows: 100000
-      interfaces: [ ]
-      excludeInterfaces: [ "lo" ]
+      interfaces: [ "eth0" ]
       logLevel: info
       resources:
         requests:
@@ -22,6 +21,7 @@ spec:
         limits:
           memory: 800Mi
       kafkaBatchSize: 10485760
+      privileged: true
   processor:
     port: 2055
     imagePullPolicy: IfNotPresent
