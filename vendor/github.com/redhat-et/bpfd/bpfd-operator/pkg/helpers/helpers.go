@@ -26,7 +26,9 @@ import (
 	bpfdiov1alpha1 "github.com/redhat-et/bpfd/bpfd-operator/apis/v1alpha1"
 	bpfdclientset "github.com/redhat-et/bpfd/bpfd-operator/pkg/client/clientset/versioned"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -140,6 +142,41 @@ func NewBpfProgramConfig(name string, progType ProgType) *bpfdiov1alpha1.BpfProg
 	default:
 		return nil
 	}
+}
+
+func CreateOrUpdateOwnedBpfProgConf(c *bpfdclientset.Clientset, progConfig *bpfdiov1alpha1.BpfProgramConfig, owner client.Object, ownerScheme *runtime.Scheme) error {
+	progName := progConfig.GetName()
+	ctx := context.Background()
+
+	err := ctrl.SetControllerReference(owner, progConfig, ownerScheme)
+	if err != nil {
+		log.Error(err, "Failed to set controller reference")
+		return err
+	}
+
+	progConfigExisting, err := c.BpfdV1alpha1().BpfProgramConfigs().Get(ctx, progName, metav1.GetOptions{})
+	if err != nil {
+		// Create if not found
+		if errors.IsNotFound(err) {
+			_, err = c.BpfdV1alpha1().BpfProgramConfigs().Create(ctx, progConfig, metav1.CreateOptions{})
+			if err != nil {
+				return fmt.Errorf("error creating BpfProgramConfig %s: %v", progName, err)
+			}
+
+			return nil
+		}
+		return fmt.Errorf("error getting BpfProgramConfig %s: %v", progName, err)
+	}
+
+	progConfig.SetResourceVersion(progConfigExisting.GetResourceVersion())
+
+	// Update if already exists
+	_, err = c.BpfdV1alpha1().BpfProgramConfigs().Update(ctx, progConfig, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("error updating BpfProgramConfig %s: %v", progName, err)
+	}
+
+	return nil
 }
 
 func CreateOrUpdateBpfProgConf(c *bpfdclientset.Clientset, progConfig *bpfdiov1alpha1.BpfProgramConfig) error {

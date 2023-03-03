@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -133,7 +134,7 @@ func (c *AgentController) Reconcile(
 		labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "netobserv"}}
 		if bpfdEnabled {
 			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
-			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, &labelSelector); err != nil {
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, &labelSelector, target); err != nil {
 				return err
 			}
 		} else {
@@ -156,41 +157,31 @@ func (c *AgentController) Reconcile(
 
 	switch c.requiredAction(current, desired) {
 	case actionCreate:
+		rlog.Info("action: create agent")
 		// Create bpfdProgramConfig if bpfd is enabled
 		// TODO(astoycos) not enabled for exclude interfaces
 		if bpfdEnabled {
 			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
-			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil); err != nil {
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil, target); err != nil {
 				return err
 			}
 		} else {
 			rlog.Info("bpfd isn't enabled, not deploying bpfProgramConfigs")
 		}
-		rlog.Info("action: create agent")
 		return c.client.CreateOwned(ctx, desired)
 	case actionUpdate:
+		rlog.Info("action: update agent")
 		if bpfdEnabled {
 			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
-			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil); err != nil {
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil, target); err != nil {
 				return err
 			}
 		} else {
 			rlog.Info("bpfd isn't enabled, not deploying bpfProgramConfigs")
 		}
-		rlog.Info("action: update agent")
 		return c.client.UpdateOwned(ctx, current, desired)
 	default:
 		rlog.Info("action: nothing to do")
-		// Delete any bpfProgConfigs with the label app=netobserv
-		labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "netobserv"}}
-		if desired == nil && bpfdEnabled {
-			rlog.Info("bpfd is enabled, deleting bpfProgramConfigs")
-			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, &labelSelector); err != nil {
-				return err
-			}
-		} else {
-			rlog.Info("bpfd isn't enabled, not deploying bpfProgramConfigs")
-		}
 		c.client.CheckDaemonSetInProgress(current)
 		return nil
 	}
@@ -211,8 +202,10 @@ func (c *AgentController) current(ctx context.Context) (*v1.DaemonSet, error) {
 	return &agentDS, nil
 }
 
-func (c *AgentController) desiredBpfdState(interfaces []string, deleteLabels *metav1.LabelSelector) error {
+func (c *AgentController) desiredBpfdState(interfaces []string, deleteLabels *metav1.LabelSelector, target *flowslatest.FlowCollector) error {
 	bpfdClient := bpfdHelpers.GetClientOrDie()
+	flowCollectorScheme := k8sruntime.NewScheme()
+	flowslatest.AddToScheme(flowCollectorScheme)
 
 	if deleteLabels != nil {
 		return bpfdHelpers.DeleteBpfProgConfLabels(bpfdClient, deleteLabels)
@@ -236,7 +229,7 @@ func (c *AgentController) desiredBpfdState(interfaces []string, deleteLabels *me
 		// Set Priority
 		progConfEgr.Spec.AttachPoint.NetworkMultiAttach.Priority = 50
 
-		err := bpfdHelpers.CreateOrUpdateBpfProgConf(bpfdClient, progConfEgr)
+		err := bpfdHelpers.CreateOrUpdateOwnedBpfProgConf(bpfdClient, progConfEgr, target, flowCollectorScheme)
 		if err != nil {
 			return fmt.Errorf("failed to create bpfProgramConfig: %w", err)
 		}
@@ -262,7 +255,7 @@ func (c *AgentController) desiredBpfdState(interfaces []string, deleteLabels *me
 		// Set Priority
 		progConfIng.Spec.AttachPoint.NetworkMultiAttach.Priority = 50
 
-		err = bpfdHelpers.CreateOrUpdateBpfProgConf(bpfdClient, progConfIng)
+		err = bpfdHelpers.CreateOrUpdateOwnedBpfProgConf(bpfdClient, progConfIng, target, flowCollectorScheme)
 		if err != nil {
 			return fmt.Errorf("failed to create bpfProgramConfig: %w", err)
 		}

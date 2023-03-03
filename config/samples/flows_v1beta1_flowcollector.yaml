@@ -14,7 +14,8 @@ spec:
       cacheMaxFlows: 100000
       interfaces: [ "eth0" ]
       excludeInterfaces: [ ]
-      logLevel: info
+      logLevel: debug
+      privileged: true      
       resources:
         requests:
           memory: 50Mi
@@ -26,6 +27,7 @@ spec:
   processor:
     port: 2055
     imagePullPolicy: IfNotPresent
+    healthPort: 8989
     logLevel: info
     profilePort: 6060
     metrics:

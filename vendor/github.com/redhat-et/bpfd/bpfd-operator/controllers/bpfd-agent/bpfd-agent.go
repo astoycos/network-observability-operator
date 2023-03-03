@@ -238,8 +238,13 @@ func (r *BpfProgramReconciler) reconcileBpfProgramConfig(ctx context.Context,
 	}
 
 	isNodeSelected = selector.Matches(nodeLabelSet)
+	programKey := internal.ProgramKey{Name: BpfProgramConfig.Spec.Name, ProgType: BpfProgramConfig.Spec.Type}
 
-	r.Logger.V(1).Info("Bpfd Node State Dump", "NodeState", nodeState)
+	// Dump node state debugging
+	if r.Logger.V(1).Enabled() {
+		r.Logger.V(1).Info("Desired State:", "ProgramKey", programKey)
+		internal.PrintNodeState(nodeState)
+	}
 
 	// Compare the desired state to existing bpfd state
 	v, ok := nodeState[internal.ProgramKey{Name: BpfProgramConfig.Spec.Name, ProgType: BpfProgramConfig.Spec.Type}]
@@ -334,9 +339,6 @@ func (r *BpfProgramReconciler) reconcileBpfProgramConfig(ctx context.Context,
 		BpfProgramConfig.Spec.AttachPoint.NetworkMultiAttach.ProceedOn = nil
 		v.Req.AttachPoint.NetworkMultiAttach.ProceedOn = nil
 	}
-
-	r.Logger.V(1).Info("desired k8s state vs existing state", "BpfProgramConfigSpec",
-		BpfProgramConfig.Spec, "existingState", *v.Req)
 
 	// BpfProgram exists but is not correct state, unload and recreate
 	if !reflect.DeepEqual(*v.Req, BpfProgramConfig.Spec) {

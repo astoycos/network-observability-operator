@@ -191,7 +191,7 @@ github.com/prometheus/common/model
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
-# github.com/redhat-et/bpfd/bpfd-operator v0.0.0-00010101000000-000000000000 => github.com/astoycos/bpfd/bpfd-operator v0.0.0-20230217210740-1fccb4ae84e8
+# github.com/redhat-et/bpfd/bpfd-operator v0.0.0-00010101000000-000000000000 => github.com/astoycos/bpfd/bpfd-operator v0.0.0-20230303200127-7d00b49da314
 ## explicit; go 1.19
 github.com/redhat-et/bpfd/bpfd-operator/apis/v1alpha1
 github.com/redhat-et/bpfd/bpfd-operator/controllers/bpfd-agent
@@ -748,4 +748,4 @@ sigs.k8s.io/structured-merge-diff/v4/value
 ## explicit; go 1.12
 sigs.k8s.io/yaml
 # github.com/prometheus/common v0.32.1 => github.com/netobserv/prometheus-common v0.31.2-0.20220720134304-43e74fd22881
-# github.com/redhat-et/bpfd/bpfd-operator => github.com/astoycos/bpfd/bpfd-operator v0.0.0-20230217210740-1fccb4ae84e8
+# github.com/redhat-et/bpfd/bpfd-operator => github.com/astoycos/bpfd/bpfd-operator v0.0.0-20230303200127-7d00b49da314

@@ -89,4 +89,4 @@ require (
 
 replace github.com/prometheus/common v0.32.1 => github.com/netobserv/prometheus-common v0.31.2-0.20220720134304-43e74fd22881
 
-replace github.com/redhat-et/bpfd/bpfd-operator => github.com/astoycos/bpfd/bpfd-operator v0.0.0-20230217210740-1fccb4ae84e8
+replace github.com/redhat-et/bpfd/bpfd-operator => github.com/astoycos/bpfd/bpfd-operator v0.0.0-20230303200127-7d00b49da314
