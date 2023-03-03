@@ -109,6 +109,9 @@ func (c *AgentController) Reconcile(
 	if err != nil {
 		return fmt.Errorf("fetching current EBPF Agent: %w", err)
 	}
+
+	bpfdEnabled := bpfdHelpers.IsBpfdDeployed()
+
 	if !helper.UseEBPF(&target.Spec) || c.previousPrivilegedNamespace != c.privilegedNamespace {
 		if current == nil {
 			rlog.Info("nothing to do, as the requested agent is not eBPF",
@@ -128,7 +131,7 @@ func (c *AgentController) Reconcile(
 
 		// Delete any bpfProgConfigs with the label app=netobserv
 		labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "netobserv"}}
-		if bpfdHelpers.IsBpfdDeployed() {
+		if bpfdEnabled {
 			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
 			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, &labelSelector); err != nil {
 				return err
@@ -144,7 +147,7 @@ func (c *AgentController) Reconcile(
 	if err := c.permissions.Reconcile(ctx, &target.Spec.Agent.EBPF); err != nil {
 		return fmt.Errorf("reconciling permissions: %w", err)
 	}
-	desired := c.desired(target)
+	desired := c.desired(target, bpfdEnabled)
 
 	// Annotate pod with certificate reference so that it is reloaded if modified
 	if err := c.client.CertWatcher.AnnotatePod(ctx, c.client, &desired.Spec.Template, kafkaCerts); err != nil {
@@ -155,7 +158,7 @@ func (c *AgentController) Reconcile(
 	case actionCreate:
 		// Create bpfdProgramConfig if bpfd is enabled
 		// TODO(astoycos) not enabled for exclude interfaces
-		if bpfdHelpers.IsBpfdDeployed() {
+		if bpfdEnabled {
 			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
 			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil); err != nil {
 				return err
@@ -166,7 +169,7 @@ func (c *AgentController) Reconcile(
 		rlog.Info("action: create agent")
 		return c.client.CreateOwned(ctx, desired)
 	case actionUpdate:
-		if bpfdHelpers.IsBpfdDeployed() {
+		if bpfdEnabled {
 			rlog.Info("bpfd is enabled, deploying bpfProgramConfigs")
 			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, nil); err != nil {
 				return err
@@ -178,6 +181,16 @@ func (c *AgentController) Reconcile(
 		return c.client.UpdateOwned(ctx, current, desired)
 	default:
 		rlog.Info("action: nothing to do")
+		// Delete any bpfProgConfigs with the label app=netobserv
+		labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "netobserv"}}
+		if desired == nil && bpfdEnabled {
+			rlog.Info("bpfd is enabled, deleting bpfProgramConfigs")
+			if err := c.desiredBpfdState(target.Spec.Agent.EBPF.Interfaces, &labelSelector); err != nil {
+				return err
+			}
+		} else {
+			rlog.Info("bpfd isn't enabled, not deploying bpfProgramConfigs")
+		}
 		c.client.CheckDaemonSetInProgress(current)
 		return nil
 	}
@@ -262,13 +275,26 @@ func (c *AgentController) desiredBpfdState(interfaces []string, deleteLabels *me
 	return nil
 }
 
-func (c *AgentController) desired(coll *flowslatest.FlowCollector) *v1.DaemonSet {
+func (c *AgentController) desired(coll *flowslatest.FlowCollector, bpfdEnabled bool) *v1.DaemonSet {
 	if coll == nil || !helper.UseEBPF(&coll.Spec) {
 		return nil
 	}
 	version := helper.ExtractVersion(c.config.EBPFAgentImage)
 	volumeMounts := []corev1.VolumeMount{}
 	volumes := []corev1.Volume{}
+	if bpfdEnabled {
+		volumes = append(volumes, corev1.Volume{
+			Name: "bpfd-fs",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/run/bpfd/fs/maps"},
+			},
+		})
+
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "bpfd-fs",
+			MountPath: "/run/bpfd/fs/maps",
+		})
+	}
 	if helper.UseKafka(&coll.Spec) && coll.Spec.Kafka.TLS.Enable {
 		// NOTE: secrets need to be copied from the base netobserv namespace to the privileged one.
 		// This operation must currently be performed manually (run "make fix-ebpf-kafka-tls"). It could be automated here.
@@ -316,6 +342,10 @@ func (c *AgentController) desired(coll *flowslatest.FlowCollector) *v1.DaemonSet
 
 func (c *AgentController) envConfig(coll *flowslatest.FlowCollector) []corev1.EnvVar {
 	var config []corev1.EnvVar
+	config = append(config, corev1.EnvVar{
+		Name:      "NODENAME",
+		ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"}},
+	})
 	if coll.Spec.Agent.EBPF.CacheActiveTimeout != "" {
 		config = append(config, corev1.EnvVar{
 			Name:  envCacheActiveTimeout,

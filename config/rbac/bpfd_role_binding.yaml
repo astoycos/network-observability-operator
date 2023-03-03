@@ -27,5 +27,5 @@ roleRef:
   name: bpfd-bpfprogramconfig-editor-role
 subjects:
 - kind: ServiceAccount
-  name: netobserv-account
-  namespace: netobserv
+  name: netobserv-ebpf-agent
+  namespace: netobserv-privileged
